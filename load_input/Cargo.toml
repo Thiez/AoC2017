@@ -1,0 +1,6 @@
+[package]
+name = "load_input"
+version = "0.1.0"
+authors = ["Matthijs Hofstra <thiezz@gmail.com>"]
+
+[dependencies]
