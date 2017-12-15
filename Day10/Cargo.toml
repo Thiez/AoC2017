@@ -1,6 +1,8 @@
 [package]
-name = "Day10"
+name = "day10"
 version = "0.1.0"
 authors = ["Matthijs Hofstra <thiezz@gmail.com>"]
 
 [dependencies]
+knot_hash = { path = "../knot_hash" }
+load_input = { path = "../load_input" }
