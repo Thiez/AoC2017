@@ -1,5 +1,6 @@
 extern crate load_input;
 
+use std::collections::VecDeque;
 use std::str::FromStr;
 
 #[derive(Copy, Clone, Debug)]
@@ -13,7 +14,7 @@ enum RegOrInt {
 
 #[derive(Copy, Clone, Debug)]
 enum Command {
-    Snd(Reg),
+    Snd(RegOrInt),
     Set(Reg, RegOrInt),
     Add(Reg, RegOrInt),
     Mul(Reg, RegOrInt),
@@ -28,6 +29,20 @@ struct State<'a> {
     ip: i64,
     registers: [i64; 26],
     last_played: i64
+}
+
+struct ProgramState {
+    ip: i64,
+    registers: [i64; 26],
+    incoming: VecDeque<i64>,
+    received: Vec<i64>,
+    sends: u64
+}
+
+struct MultiState<'a> {
+    instructions: &'a [Command],
+    p0: ProgramState,
+    p1: ProgramState
 }
 
 impl FromStr for Reg {
@@ -88,7 +103,7 @@ impl<'a> State<'a> {
             let instr = self.instructions[self.ip as usize];
             self.ip += 1;
             match instr {
-                Command::Snd(x) => self.last_played = self.registers[x.0],
+                Command::Snd(x) => self.last_played = get_value(&self, x),
                 Command::Set(x, y) => self.registers[x.0] = get_value(&self, y),
                 Command::Add(x, y) => self.registers[x.0] += get_value(&self, y),
                 Command::Mul(x, y) => self.registers[x.0] *= get_value(&self, y),
@@ -106,6 +121,75 @@ impl<'a> State<'a> {
     }
 }
 
+impl<'a> MultiState<'a> {
+    fn execute_one(mut self) -> Result<Self, Self> {
+        fn get_value(state: &ProgramState, roi: RegOrInt) -> i64 {
+            match roi {
+                RegOrInt::Reg(y) => state.registers[y.0],
+                RegOrInt::Int(y) => y
+            }
+        }
+        fn execute_single(instructions: &[Command], state: &mut ProgramState, channel_out: &mut VecDeque<i64>) -> bool {
+            if state.ip < 0 || instructions.len() <= (state.ip as usize) {
+                return false;
+            }
+            let instr = instructions[state.ip as usize];
+            match instr {
+                Command::Snd(x) => {
+                    channel_out.push_back(get_value(&state ,x));
+                    state.sends += 1;
+                },
+                Command::Set(x, y) => state.registers[x.0] = get_value(&state, y),
+                Command::Add(x, y) => state.registers[x.0] += get_value(&state, y),
+                Command::Mul(x, y) => state.registers[x.0] *= get_value(&state, y),
+                Command::Mod(x, y) => state.registers[x.0] %= get_value(&state, y),
+                Command::Rcv(x) => {
+                    if let Some(rcv) = state.incoming.pop_front() {
+                        state.received.push(rcv);
+                        state.registers[x.0] = rcv;
+                    } else {
+                        return false;
+                    }
+                },
+                Command::Jgz(x, y) if 0 < get_value(&state, x) => state.ip += get_value(&state, y) - 1,
+                _ => (),
+            }
+            state.ip += 1;
+            true
+        }
+
+        let progress0 = {
+            let MultiState {
+                instructions,
+                ref mut p0,
+                p1: ProgramState {
+                    ref mut incoming, ..
+                }} = self;
+            execute_single(instructions, p0, incoming)
+        };
+        let progress1 = {
+            let MultiState {
+                instructions,
+                p0: ProgramState {
+                    ref mut incoming, ..
+                },
+                ref mut p1 } = self;
+            execute_single(instructions, p1, incoming)
+        };
+
+        match (progress0, progress1) {
+            (false, false) => {
+                println!("Deadlock!");
+                return Err(self)
+            },
+            (false, true) => println!("0 sleeping"),
+            (true, false) => println!("1 sleeping"),
+            _ => (),
+        }
+        Ok(self)
+    }
+}
+
 fn main() {
     let input = load_input::load_input();
     let commands = input.lines().map(|s|match s.parse() { Ok(v) => v, _ => panic!("{}", s )}).collect::<Vec<_>>();
@@ -116,6 +200,38 @@ fn main() {
         registers: [0; 26],
         last_played: 0
     };
-    
     while let Some(s) = state.execute_one() { state = s; }
+
+
+    let mut state = MultiState {
+        instructions: &commands,
+        p0: ProgramState {
+            ip: 0,
+            registers: [0i64; 26],
+            incoming: Default::default(),
+            received: Default::default(),
+            sends: 0
+        },
+        p1: ProgramState {
+            ip: 0,
+            registers: [0i64; 26],
+            incoming: Default::default(),
+            received: Default::default(),
+            sends: 0
+        }
+    };
+    let p = "p".parse::<Reg>().unwrap();
+    state.p0.registers[p.0] = 0;
+    state.p1.registers[p.0] = 1;
+    loop {
+        match state.execute_one() {
+            Ok(s) => state = s,
+            Err(s) => {
+                println!("p1 sends: {}", s.p1.sends);
+                println!("p0: {:?}", s.p0.registers);
+                println!("p1: {:?}", s.p1.registers);
+                break;
+            }
+        }
+    }
 }
